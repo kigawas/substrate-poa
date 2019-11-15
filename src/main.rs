@@ -1,8 +1,5 @@
 //! Substrate Node Template CLI library.
 
-#![warn(missing_docs)]
-#![warn(unused_extern_crates)]
-
 mod chain_spec;
 #[macro_use]
 mod service;
@@ -15,7 +12,7 @@ fn main() -> Result<(), cli::error::Error> {
 		name: "Substrate Node",
 		commit: env!("VERGEN_SHA_SHORT"),
 		version: env!("CARGO_PKG_VERSION"),
-		executable_name: "node-template",
+		executable_name: "substrate-poa",
 		author: "Anonymous",
 		description: "Template Node",
 		support_url: "support.anonymous.an",

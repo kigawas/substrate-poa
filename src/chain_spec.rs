@@ -3,8 +3,8 @@ use grandpa_primitives::AuthorityId as GrandpaId;
 use primitives::{sr25519, Pair, Public};
 use sr_primitives::traits::{IdentifyAccount, Verify};
 use substrate_poa_runtime::{
-	AccountId, AuraConfig, BalancesConfig, GenesisConfig, GrandpaConfig, IndicesConfig, Signature,
-	SudoConfig, SystemConfig, WASM_BINARY,
+	opaque::SessionKeys, AccountId, AuraConfig, BalancesConfig, GenesisConfig, GrandpaConfig,
+	IndicesConfig, SessionConfig, Signature, SudoConfig, SystemConfig, WASM_BINARY,
 };
 use substrate_service;
 
@@ -43,8 +43,12 @@ where
 }
 
 /// Helper function to generate an authority key for Aura
-pub fn get_authority_keys_from_seed(s: &str) -> (AuraId, GrandpaId) {
-	(get_from_seed::<AuraId>(s), get_from_seed::<GrandpaId>(s))
+pub fn get_authority_keys_from_seed(s: &str) -> (AccountId, AuraId, GrandpaId) {
+	(
+		get_account_id_from_seed::<sr25519::Public>(s),
+		get_from_seed::<AuraId>(s),
+		get_from_seed::<GrandpaId>(s),
+	)
 }
 
 impl Alternative {
@@ -117,8 +121,13 @@ impl Alternative {
 		}
 	}
 }
+
+fn session_keys(aura: AuraId, grandpa: GrandpaId) -> SessionKeys {
+	SessionKeys { aura, grandpa }
+}
+
 fn testnet_genesis(
-	initial_authorities: Vec<(AuraId, GrandpaId)>,
+	initial_authorities: Vec<(AccountId, AuraId, GrandpaId)>,
 	root_key: AccountId,
 	endowed_accounts: Vec<AccountId>,
 	_enable_println: bool,
@@ -129,33 +138,31 @@ fn testnet_genesis(
 			changes_trie_config: Default::default(),
 		}),
 		indices: Some(IndicesConfig {
-			ids: initial_authorities.iter().map(|x| x.0.clone()).collect(), // controller keys from authorities vec declared above
+			ids: endowed_accounts.clone(),
 		}),
 		balances: Some(BalancesConfig {
-			balances: initial_authorities
+			balances: endowed_accounts
 				.iter()
-				.map(|x| (x.0.clone(), 1 << 60))
-				.collect(), // controller keys from authorities vec declared above
+				.cloned()
+				.map(|k| (k, 1 << 60))
+				.collect(),
 			vesting: vec![],
 		}),
 		sudo: Some(SudoConfig { key: root_key }),
 		aura: Some(AuraConfig {
-			authorities: initial_authorities.iter().map(|x| (x.0.clone())).collect(),
+			authorities: vec![],
 		}),
 		grandpa: Some(GrandpaConfig {
-			authorities: initial_authorities
-				.iter()
-				.map(|x| (x.1.clone(), 1))
-				.collect(),
+			authorities: vec![],
 		}),
 		session: Some(SessionConfig {
-			validators: initial_authorities.iter().map(|x| x.0.clone()).collect(), // controller keys from authorities vec declared above
-			session_length: 5 * MINUTES,
-			keys: authorities.clone(), // authorities vec declared above
+			keys: initial_authorities
+				.iter()
+				.map(|x| (x.0.clone(), session_keys(x.1.clone(), x.2.clone())))
+				.collect::<Vec<_>>(),
 		}),
-		sudo: Some(SudoConfig { key: root_key }),
-		validatorset: Some(ValidatorSetConfig {
-			validators: initial_authorities.iter().map(|x| x.0.clone()).collect(), // authorities vec declared above
-		}),
+		// validatorset: Some(ValidatorSetConfig {
+		// 	validators: initial_authorities.iter().map(|x| x.0.clone()).collect(), // authorities vec declared above
+		// }),
 	}
 }

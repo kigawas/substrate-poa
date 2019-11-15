@@ -15,9 +15,9 @@ use transaction_pool::{self, txpool::Pool as TransactionPool};
 
 // Our native executor instance.
 native_executor_instance!(
-    pub Executor,
-    utxo_runtime::api::dispatch,
-    utxo_runtime::native_version,
+	pub Executor,
+	substrate_poa_runtime::api::dispatch,
+	substrate_poa_runtime::native_version,
 );
 
 construct_simple_protocol! {
@@ -35,8 +35,8 @@ macro_rules! new_full_start {
 		let inherent_data_providers = inherents::InherentDataProviders::new();
 
 		let builder = substrate_service::ServiceBuilder::new_full::<
-			utxo_runtime::opaque::Block,
-			utxo_runtime::RuntimeApi,
+			substrate_poa_runtime::opaque::Block,
+			substrate_poa_runtime::RuntimeApi,
 			crate::service::Executor,
 		>($config)?
 		.with_select_chain(|_config, backend| {
@@ -54,7 +54,7 @@ macro_rules! new_full_start {
 				.ok_or_else(|| substrate_service::Error::SelectChainRequired)?;
 
 			let (grandpa_block_import, grandpa_link) =
-				grandpa::block_import::<_, _, _, utxo_runtime::RuntimeApi, _, _>(
+				grandpa::block_import::<_, _, _, substrate_poa_runtime::RuntimeApi, _>(
 					client.clone(),
 					&*client,
 					select_chain,
@@ -74,7 +74,6 @@ macro_rules! new_full_start {
 
 			Ok(import_queue)
 		})?;
-
 		(builder, import_setup, inherent_data_providers)
 		}};
 }
@@ -211,11 +210,11 @@ pub fn new_light<C: Send + Default + 'static>(
 					.ok_or_else(|| {
 						"Trying to start light import queue without active fetch checker"
 					})?;
-				let grandpa_block_import = grandpa::light_block_import::<_, _, _, RuntimeApi, _>(
+				let grandpa_block_import = grandpa::light_block_import::<_, _, _, RuntimeApi>(
 					client.clone(),
 					backend,
+					&*client.clone(),
 					Arc::new(fetch_checker),
-					client.clone(),
 				)?;
 				let finality_proof_import = grandpa_block_import.clone();
 				let finality_proof_request_builder =

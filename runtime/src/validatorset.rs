@@ -6,17 +6,19 @@ use support::{
 };
 use system::{ensure_root, ensure_signed};
 
+use crate::types::SessionIndex;
+
 pub trait Trait: system::Trait + session::Trait {
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
 decl_storage! {
 	trait Store for Module<T: Trait> as ValidatorSet {
-		Validators get(validators): map T::AccountId => T::Keys;
-		AddProposals get(add_proposals): map (T::AccountId, T::Keys) => bool;
-		RemovalProposals get(removal_proposals): map (T::AccountId, T::Keys) => bool;
-		AddVotes get(add_votes): map (T::AccountId, T::Keys) => Vec<T::AccountId>;
-		RemovalVotes get(removal_votes): map (T::AccountId, T::Keys) => Vec<T::AccountId>;
+		Validators get(validators): Vec<T::AccountId>;
+		AddProposals get(add_proposals): map T::AccountId => bool;
+		RemovalProposals get(removal_proposals): map T::AccountId  => bool;
+		AddVotes get(add_votes): map T::AccountId => Vec<T::AccountId>;
+		RemovalVotes get(removal_votes): map T::AccountId => Vec<T::AccountId>;
 	}
 }
 
@@ -24,19 +26,18 @@ decl_event!(
 	pub enum Event<T>
 	where
 		AccountId = <T as system::Trait>::AccountId,
-		SessionKey = <T as session::Trait>::Keys,
 	{
 		// New validator proposed. First argument is the AccountId of proposer.
-		ValidatorProposed(AccountId, AccountId, SessionKey),
+		ValidatorProposed(AccountId, AccountId),
 
 		// Validator removal proposed. First argument is the AccountId of proposer.
-		ValidatorRemovalProposed(AccountId, AccountId, SessionKey),
+		ValidatorRemovalProposed(AccountId, AccountId),
 
 		// New validator added.
-		ValidatorAdded(AccountId, SessionKey),
+		ValidatorAdded(AccountId),
 
 		// Validator removed.
-		ValidatorRemoved(AccountId, SessionKey),
+		ValidatorRemoved(AccountId),
 	}
 );
 
@@ -47,24 +48,24 @@ decl_module! {
 		/// Propose a new validator to be added.
 		///
 		/// Can only be called by an existing validator.
-		pub fn propose_validator(origin, account_id: T::AccountId, session_key: <T as session::Trait>::Keys) -> Result {
+		pub fn propose_validator(origin, account_id: T::AccountId) -> Result {
 			let who = ensure_signed(origin)?;
-			ensure!(<Validators<T>>::exists(who.clone()), "Access Denied!");
-			ensure!(!<Validators<T>>::exists(account_id.clone()), "Already a validator.");
+			ensure!(Self::is_validator(who.clone()), "Access Denied!");
+			ensure!(!Self::is_validator(account_id.clone()), "Already a validator.");
 
-			if <AddProposals<T>>::exists((account_id.clone(), session_key.clone())) {
-				let votes = <AddVotes<T>>::get((account_id.clone(), session_key.clone()));
+			if <AddProposals<T>>::exists(account_id.clone()) {
+				let votes = <AddVotes<T>>::get(account_id.clone());
 				let v = votes.into_iter().find(|x| x == &who);
 				ensure!(v == None, "You have already proposed this validator.");
 			} else {
-				<AddProposals<T>>::insert((account_id.clone(), session_key.clone()), true);
+				<AddProposals<T>>::insert(account_id.clone(), true);
 			}
 
-			<AddVotes<T>>::mutate((account_id.clone(), session_key.clone()), |vote_list| {
+			<AddVotes<T>>::mutate(account_id.clone(), |vote_list| {
 				vote_list.push(who.clone());
 			});
 
-			Self::deposit_event(RawEvent::ValidatorProposed(who, account_id, session_key));
+			Self::deposit_event(RawEvent::ValidatorProposed(who, account_id));
 			Ok(())
 		}
 
@@ -72,29 +73,29 @@ decl_module! {
 		/// and then adds the new validator.
 		///
 		/// New validator's session key should be set in session module before calling this.
-		pub fn resolve_add_validator(origin, account_id: T::AccountId, session_key: T::Keys) -> Result {
+		pub fn resolve_add_validator(origin, account_id: T::AccountId) -> Result {
 			let _who = ensure_signed(origin)?;
 
-			ensure!(!<Validators<T>>::exists(account_id.clone()), "Already a validator.");
-			ensure!(<AddProposals<T>>::exists((account_id.clone(), session_key.clone())),
+			// ensure!(!<Validators<T>>::exists(account_id.clone()), "Already a validator.");
+			ensure!(<AddProposals<T>>::exists(account_id.clone()),
 				"Proposal to add this validator does not exist.");
 
-			let votes = <AddVotes<T>>::get((account_id.clone(), session_key.clone()));
+			let votes = <AddVotes<T>>::get(account_id.clone());
 			let current_count = <session::Module<T>>::validators().len() as u32;
 			ensure!(votes.len() as u32 == current_count, "Not enough votes.");
 
-			Self::add_new_authority(account_id, session_key)?;
+			Self::add_new_authority(account_id)?;
 			Ok(())
 		}
 
 		/// Add a new validator using root/sudo privileges.
 		///
 		/// New validator's session key should be set in session module before calling this.
-		pub fn add_validator(origin, account_id: T::AccountId, session_key: T::Keys) -> Result {
+		pub fn add_validator(origin, account_id: T::AccountId) -> Result {
 			ensure_root(origin)?;
-			ensure!(!<Validators<T>>::exists(account_id.clone()), "Already a validator.");
+			// ensure!(!<Validators<T>>::exists(account_id.clone()), "Already a validator.");
 
-			Self::add_new_authority(account_id, session_key)?;
+			Self::add_new_authority(account_id)?;
 
 			Ok(())
 		}
@@ -102,37 +103,37 @@ decl_module! {
 		/// Propose the removal of a validator to be added.
 		///
 		/// Can only be called by an existing validator.
-		pub fn propose_validator_removal(origin, account_id: T::AccountId, session_key: T::Keys) -> Result {
+		pub fn propose_validator_removal(origin, account_id: T::AccountId) -> Result {
 			let who = ensure_signed(origin)?;
-			ensure!(<Validators<T>>::exists(who.clone()), "Access Denied!");
-			ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
+			// ensure!(<Validators<T>>::exists(who.clone()), "Access Denied!");
+			// ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
 
-			if <RemovalProposals<T>>::exists((account_id.clone(), session_key.clone())) {
-				let votes = <RemovalVotes<T>>::get((account_id.clone(), session_key.clone()));
+			if <RemovalProposals<T>>::exists(account_id.clone()) {
+				let votes = <RemovalVotes<T>>::get(account_id.clone());
 				let v = votes.into_iter().find(|x| x == &who);
 				ensure!(v == None, "You have already proposed removal of this validator.");
 			} else {
-				<RemovalProposals<T>>::insert((account_id.clone(), session_key.clone()), true);
+				<RemovalProposals<T>>::insert(account_id.clone(), true);
 			}
 
-			<RemovalVotes<T>>::mutate((account_id.clone(), session_key.clone()), |vote_list| {
+			<RemovalVotes<T>>::mutate(account_id.clone(), |vote_list| {
 				vote_list.push(who.clone());
 			});
 
-			Self::deposit_event(RawEvent::ValidatorRemovalProposed(who, account_id, session_key));
+			Self::deposit_event(RawEvent::ValidatorRemovalProposed(who, account_id));
 			Ok(())
 		}
 
 		/// Verifies if all *other* validators have proposed the removal of a validator
 		/// and then removes the new validator.
-		pub fn resolve_remove_validator(origin, account_id: T::AccountId, session_key: T::Keys) -> Result {
+		pub fn resolve_remove_validator(origin, account_id: T::AccountId) -> Result {
 			let _who = ensure_signed(origin)?;
 
-			ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
-			ensure!(<RemovalProposals<T>>::exists((account_id.clone(), session_key.clone())),
+			// ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
+			ensure!(<RemovalProposals<T>>::exists(account_id.clone()),
 				"Proposal to remove this validator does not exist.");
 
-			let votes = <RemovalVotes<T>>::get((account_id.clone(), session_key.clone()));
+			let votes = <RemovalVotes<T>>::get(account_id.clone());
 			let current_count = <session::Module<T>>::validators().len() as u32;
 
 			// To avoid iterating over two vecs to check if every other validator has voted,
@@ -140,16 +141,16 @@ decl_module! {
 			// This is still safe enough because you cannot vote twice.
 			ensure!(votes.len() as u32 == current_count - 1, "Not enough votes.");
 
-			Self::remove_authority(account_id, session_key)?;
+			Self::remove_authority(account_id)?;
 			Ok(())
 		}
 
 		/// Remove a validator using root/sudo privileges.
-		pub fn remove_validator(origin, account_id: T::AccountId, session_key: T::Keys) -> Result {
-			ensure_root(origin);
-			ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
+		pub fn remove_validator(origin, account_id: T::AccountId) -> Result {
+			ensure_root(origin)?;
+			// ensure!(<Validators<T>>::exists(account_id.clone()), "Not a validator.");
 
-			Self::remove_authority(account_id, session_key)?;
+			Self::remove_authority(account_id)?;
 
 			Ok(())
 		}
@@ -157,53 +158,64 @@ decl_module! {
 }
 
 impl<T: Trait> Module<T> {
-	// Adds new authority in the consensus module.
-	fn add_new_authority(account_id: T::AccountId, session_key: T::Keys) -> Result {
-		// Add new validator in session module.
-		// let mut current_validators = <session::Module<T>>::validators();
-		// current_validators.push(account_id.clone());
-		let who = match T::ValidatorIdOf::convert(account_id) {
-			Some(val_id) => val_id,
-			None => return Err("no associated validator ID for account."),
-		};
-		<session::Module<T>>::set_keys(&who);
+	fn is_validator(account_id: T::AccountId) -> bool {
+		let validators = <Validators<T>>::get();
+		validators.contains(&account_id)
+	}
+
+	fn add_new_authority(account_id: T::AccountId) -> Result {
+		ensure!(
+			!Self::is_validator(account_id.clone()),
+			"already a validator"
+		);
+
+		<Validators<T>>::mutate(|vs| {
+			vs.push(account_id.clone());
+		});
 
 		// Rotate session for new set of validators to take effect.
-		<session::Module<T>>::rotate_session();
-		<Validators<T>>::insert(account_id.clone(), session_key.clone());
+		// <session::Module<T>>::rotate_session();
 
-		Self::deposit_event(RawEvent::ValidatorAdded(account_id, session_key));
+		// Self::deposit_event(RawEvent::ValidatorAdded(account_id, session_key));
 		Ok(())
 	}
 
 	// Removes an authority
-	fn remove_authority(account_id: T::AccountId, session_key: T::Keys) -> Result {
+	fn remove_authority(account_id: T::AccountId) -> Result {
 		// Find and remove validator from the current list.
-		// let mut current_validators = <session::Module<T>>::validators();
-		// for (i, v) in current_validators.clone().into_iter().enumerate() {
-		// 	if v == account_id {
-		// 		current_validators.swap_remove(i);
-		// 	}
-		// }
-		// <session::Module<T>>::set_validators(&current_validators);
-		let who = match T::ValidatorIdOf::convert(account_id) {
-			Some(val_id) => val_id,
-			None => return Err("no associated validator ID for account."),
-		};
-		<session::Module<T>>::take_keys(&who);
+		<Validators<T>>::mutate(|vs| {
+			vs.retain(|v| *v != account_id.clone());
+		});
 
 		// Rotate session for new set of validators to take effect.
-		<session::Module<T>>::rotate_session();
-		<Validators<T>>::remove(account_id.clone());
+		// <session::Module<T>>::rotate_session();
+		// <Validators<T>>::remove(account_id.clone());
 
 		// Removing the proposals and votes so that it can be added again.
 		// Should they be preserved or archived in any way?
-		<AddProposals<T>>::remove((account_id.clone(), session_key.clone()));
-		<RemovalProposals<T>>::remove((account_id.clone(), session_key.clone()));
-		<AddVotes<T>>::remove((account_id.clone(), session_key.clone()));
-		<RemovalVotes<T>>::remove((account_id.clone(), session_key.clone()));
+		<AddProposals<T>>::remove(account_id.clone());
+		<RemovalProposals<T>>::remove(account_id.clone());
+		<AddVotes<T>>::remove(account_id.clone());
+		<RemovalVotes<T>>::remove(account_id.clone());
 
-		Self::deposit_event(RawEvent::ValidatorRemoved(account_id, session_key));
+		// Self::deposit_event(RawEvent::ValidatorRemoved(account_id, session_key));
 		Ok(())
+	}
+
+	fn next_validators() -> Option<Vec<T::AccountId>> {
+		Some(Self::authorities())
+	}
+
+	pub fn authorities() -> Vec<T::AccountId> {
+		<Validators<T>>::get()
+	}
+}
+
+impl<T: Trait> session::OnSessionEnding<T::AccountId> for Module<T> {
+	fn on_session_ending(
+		_ending: SessionIndex,
+		_start_session: SessionIndex,
+	) -> Option<Vec<T::AccountId>> {
+		Self::next_validators()
 	}
 }

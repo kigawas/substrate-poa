@@ -9,23 +9,21 @@
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use aura_primitives::sr25519::AuthorityId as AuraId;
-use client::{
-	block_builder::api::{self as block_builder_api, CheckInherentsResult, InherentData},
-	impl_runtime_apis, runtime_api as client_api,
-};
-use core::marker::PhantomData;
 use grandpa::fg_primitives;
 use grandpa::{AuthorityId as GrandpaId, AuthorityWeight as GrandpaWeight};
+use inherents::{CheckInherentsResult, InherentData};
 use primitives::OpaqueMetadata;
+use rstd::marker::PhantomData;
 use rstd::prelude::*;
+use sr_api::impl_runtime_apis;
 use sr_primitives::traits::{
-	BlakeTwo256, Block as BlockT, ConvertInto, IdentifyAccount, NumberFor, OpaqueKeys,
-	StaticLookup, Verify,
+	BlakeTwo256, Block as BlockT, Convert, ConvertInto, IdentifyAccount, NumberFor, OpaqueKeys,
+	StaticLookup,
 };
 use sr_primitives::weights::Weight;
 use sr_primitives::{
 	create_runtime_str, generic, impl_opaque_keys, transaction_validity::TransactionValidity,
-	ApplyResult, MultiSignature,
+	ApplyResult,
 };
 #[cfg(feature = "std")]
 use version::NativeVersion;
@@ -39,31 +37,8 @@ pub use sr_primitives::{Perbill, Permill};
 pub use support::{construct_runtime, parameter_types, traits::Randomness, StorageValue};
 pub use timestamp::Call as TimestampCall;
 
-/// An index to a block.
-pub type BlockNumber = u32;
-
-/// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
-pub type Signature = MultiSignature;
-
-/// Some way of identifying an account on the chain. We intentionally make it equivalent
-/// to the public key of our transaction signing scheme.
-pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
-
-/// The type for looking up accounts. We don't expect more than 4 billion of them, but you
-/// never know...
-pub type AccountIndex = u32;
-
-/// Balance of an account.
-pub type Balance = u128;
-
-/// Index of a transaction in the chain.
-pub type Index = u32;
-
-/// A hash of some data used by the chain.
-pub type Hash = primitives::H256;
-
-/// Digest item type.
-pub type DigestItem = generic::DigestItem<Hash>;
+mod types;
+pub use types::{AccountId, AccountIndex, Balance, BlockNumber, Hash, Index, Signature};
 
 mod validatorset;
 
@@ -181,13 +156,11 @@ impl indices::Trait for Runtime {
 }
 
 parameter_types! {
-	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(17);
+	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(33);
 
 }
 
-struct ShouldEndSession<T> {
-	p: PhantomData<T>,
-}
+pub struct ShouldEndSession<T>(PhantomData<T>);
 
 impl<T: system::Trait> session::ShouldEndSession<T::BlockNumber> for ShouldEndSession<T> {
 	fn should_end_session(now: T::BlockNumber) -> bool {
@@ -195,14 +168,23 @@ impl<T: system::Trait> session::ShouldEndSession<T::BlockNumber> for ShouldEndSe
 	}
 }
 
+pub struct ValidatorIdOf<T>(PhantomData<T>);
+
+impl<T: system::Trait> Convert<T::AccountId, Option<T::AccountId>> for ValidatorIdOf<T> {
+	fn convert(account: T::AccountId) -> Option<T::AccountId> {
+		Some(account)
+	}
+}
+// impl primitives::Con
+
 impl session::Trait for Runtime {
-	type OnSessionEnding = ();
+	type OnSessionEnding = ValidatorSet;
 	type SessionHandler = <opaque::SessionKeys as OpaqueKeys>::KeyTypeIdProviders;
 	type ShouldEndSession = ShouldEndSession<Self>;
 	type Event = Event;
 	type Keys = opaque::SessionKeys;
 	type ValidatorId = <Self as system::Trait>::AccountId;
-	type ValidatorIdOf = ConvertInto;
+	type ValidatorIdOf = ValidatorIdOf<Self>;
 	type SelectInitialValidators = ();
 	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
 }
@@ -280,7 +262,7 @@ construct_runtime!(
 		Sudo: sudo,
 		RandomnessCollectiveFlip: randomness_collective_flip::{Module, Call, Storage},
 
-		ValidatorSet: validatorset::{Module, Call, Storage, Config<T>, Event<T>},
+		ValidatorSet: validatorset::{Module, Call, Storage, Event<T>},
 	}
 );
 
@@ -313,7 +295,7 @@ pub type Executive =
 
 // Implement our runtime API endpoints. This is just a bunch of proxying.
 impl_runtime_apis! {
-	impl client_api::Core<Block> for Runtime {
+	impl sr_api::Core<Block> for Runtime {
 		fn version() -> RuntimeVersion {
 			VERSION
 		}
@@ -327,7 +309,7 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl client_api::Metadata<Block> for Runtime {
+	impl sr_api::Metadata<Block> for Runtime {
 		fn metadata() -> OpaqueMetadata {
 			Runtime::metadata().into()
 		}
@@ -355,7 +337,7 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl client_api::TaggedTransactionQueue<Block> for Runtime {
+	impl tx_pool_api::TaggedTransactionQueue<Block> for Runtime {
 		fn validate_transaction(tx: <Block as BlockT>::Extrinsic) -> TransactionValidity {
 			Executive::validate_transaction(tx)
 		}
@@ -379,7 +361,6 @@ impl_runtime_apis! {
 
 	impl substrate_session::SessionKeys<Block> for Runtime {
 		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
-			let seed = seed.as_ref().map(|s| rstd::str::from_utf8(&s).expect("Seed is an utf8 string"));
 			opaque::SessionKeys::generate(seed)
 		}
 	}
